@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const crypto = require('crypto');
 const cors = require('cors');
 require('dotenv').config();
 
@@ -10,7 +11,6 @@ app.use(cors({
     credentials: true
 }));
 
-// Configuration
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'hrrrrrrrrry_bot';
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || '-1004498096954';
@@ -19,7 +19,6 @@ const FIREBASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://hrry-store-de
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// 9 PDF Mapping according to system specifications
 const PDF_REWARDS = [
     { id: 1, req: 1, subject: 'Economics', title: 'PDF 1 - Economics', url: 'https://drive.google.com/file/d/1hbKSxeX6SWK0lpSWHo21vNK8l9F5IXJ9/view?usp=drivesdk' },
     { id: 2, req: 2, subject: 'Physics', title: 'PDF 2 - Physics', url: 'https://drive.google.com/file/d/1PN9LaQCaWWCfV7xdNCb8PgC671Fs7hdQ/view?usp=drivesdk' },
@@ -32,136 +31,72 @@ const PDF_REWARDS = [
     { id: 9, req: 9, subject: 'English', title: 'PDF 9 - English', url: 'https://drive.google.com/file/d/1GSTyzCiPRwcmfGiaFR-NJRBe2El5UVEj/view?usp=drivesdk' }
 ];
 
-// Firebase Helper Functions
 async function getFirebaseData(path) {
     try {
         const res = await axios.get(`${FIREBASE_URL}/${path}.json`);
         return res.data;
-    } catch (e) {
-        console.error(`Firebase Read Error [${path}]:`, e.message);
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 async function setFirebaseData(path, data) {
     try {
         await axios.put(`${FIREBASE_URL}/${path}.json`, data);
         return true;
-    } catch (e) {
-        console.error(`Firebase Write Error [${path}]:`, e.message);
-        return false;
-    }
+    } catch (e) { return false; }
 }
 
 async function updateFirebaseData(path, data) {
     try {
         await axios.patch(`${FIREBASE_URL}/${path}.json`, data);
         return true;
-    } catch (e) {
-        console.error(`Firebase Patch Error [${path}]:`, e.message);
-        return false;
-    }
+    } catch (e) { return false; }
 }
 
-// Check Channel Membership via Telegram Bot API
 async function checkChannelMembership(telegramUserId) {
     try {
         let formattedChannelId = CHANNEL_ID;
-        if (!formattedChannelId.startsWith('-')) {
-            formattedChannelId = `-100${CHANNEL_ID}`;
-        }
-
-        const res = await axios.get(`${TELEGRAM_API}/getChatMember`, {
-            params: {
-                chat_id: formattedChannelId,
-                user_id: telegramUserId
-            }
-        });
-
+        if (!formattedChannelId.startsWith('-')) formattedChannelId = `-100${formattedChannelId}`;
+        const res = await axios.get(`${TELEGRAM_API}/getChatMember`, { params: { chat_id: formattedChannelId, user_id: telegramUserId } });
         if (res.data && res.data.ok) {
-            const status = res.data.result.status;
-            return ['creator', 'administrator', 'member'].includes(status);
+            return ['creator', 'administrator', 'member'].includes(res.data.result.status);
         }
-    } catch (error) {
-        console.error('Channel Verification Error:', error.response?.data || error.message);
-    }
+    } catch (error) {}
     return false;
 }
 
-// Telegram Message Sending Helper
-async function sendMessage(chatId, text, replyMarkup = null) {
-    try {
-        await axios.post(`${TELEGRAM_API}/sendMessage`, {
-            chat_id: chatId,
-            text: text,
-            parse_mode: 'HTML',
-            reply_markup: replyMarkup
-        });
-    } catch (e) {
-        console.error('Send Message Error:', e.response?.data || e.message);
-    }
+// Telegram Login Hash Verification Middleware/Function
+function verifyTelegramLogin(query) {
+    const { hash, ...data } = query;
+    const checkString = Object.keys(data)
+        .sort()
+        .map(k => `${k}=${data[k]}`)
+        .join('\n');
+    
+    const secretKey = crypto.createHash('sha256').update(BOT_TOKEN).digest();
+    const hmac = crypto.createHmac('sha256', secretKey).update(checkString).digest('hex');
+    
+    return hmac === hash;
 }
 
-// Verify and Award Referral Credit
-async function processReferralVerification(userId) {
-    const user = await getFirebaseData(`users/${userId}`);
-    if (!user) return { success: false, message: 'User not found' };
-
-    const isMember = await checkChannelMembership(userId);
-    if (!isMember) {
-        return { success: false, message: 'Pehle Telegram channel join karein, tabhi verification successful hogi!' };
+// Telegram Login Callback Endpoint
+app.get('/api/auth/telegram/callback', async (req, res) => {
+    const query = req.query;
+    if (!query.id || !verifyTelegramLogin(query)) {
+        return res.status(403).send('Invalid Telegram Authentication');
     }
 
-    await updateFirebaseData(`users/${userId}`, { is_channel_member: true });
+    const userId = String(query.id);
+    const firstName = query.first_name || 'User';
+    const username = query.username || '';
+    const photoUrl = query.photo_url || '';
 
-    if (user.referred_by && !user.referral_credited) {
-        const referrerId = user.referred_by;
-        
-        if (referrerId !== String(userId)) {
-            const referrer = await getFirebaseData(`users/${referrerId}`);
-            if (referrer) {
-                const newCount = (referrer.verified_referrals || 0) + 1;
-                
-                await updateFirebaseData(`users/${referrerId}`, {
-                    verified_referrals: newCount,
-                    updated_at: new Date().toISOString()
-                });
-
-                await updateFirebaseData(`users/${userId}`, {
-                    referral_credited: true
-                });
-
-                await sendMessage(
-                    referrerId,
-                    `🎉 <b>Naya Verified Referral!</b>\n\nAapko 1 direct referral credit mil gaya hai.\nKul verified referrals: <b>${newCount}</b>\n\nAb website par jaakar apne PDFs check karein!`
-                );
-            }
-        }
-    }
-
-    return { success: true, message: 'Account aur Channel Membership successfully verify ho gayi hai!' };
-}
-
-// Telegram Webhook Endpoint
-app.post('/api/telegram/webhook', async (req, res) => {
-    const { message } = req.body;
-    if (!message || !message.from) {
-        return res.sendStatus(200);
-    }
-
-    const chatId = message.chat.id;
-    const userId = String(message.from.id);
-    const text = message.text || '';
-    const username = message.from.username || '';
-    const firstName = message.from.first_name || 'User';
-
-    // Ensure user exists in Firebase
     let user = await getFirebaseData(`users/${userId}`);
     if (!user) {
         user = {
             telegram_id: userId,
             username: username,
             first_name: firstName,
+            photo_url: photoUrl,
             verified_referrals: 0,
             referral_code: `REF_${userId}`,
             is_channel_member: false,
@@ -169,93 +104,21 @@ app.post('/api/telegram/webhook', async (req, res) => {
             created_at: new Date().toISOString()
         };
         await setFirebaseData(`users/${userId}`, user);
+    } else {
+        await updateFirebaseData(`users/${userId}`, { first_name: firstName, username, photo_url: photoUrl });
     }
 
-    // Command: /start or /start REFERRAL_CODE
-    if (text.startsWith('/start')) {
-        const parts = text.split(' ');
-        const refCode = parts.length > 1 ? parts[1].trim() : null;
-
-        if (refCode && !user.referred_by && !user.referral_credited) {
-            const referrerId = refCode.replace('REF_', '');
-            if (referrerId !== userId) {
-                await updateFirebaseData(`users/${userId}`, { referred_by: referrerId });
-            }
-        }
-
-        const frontendWebUrl = process.env.FRONTEND_URL || 'https://book-referal.vercel.app';
-        
-        const replyMarkup = {
-            inline_keyboard: [
-                [{ text: '📢 Channel Join Karein', url: CHANNEL_URL }],
-                [{ text: '🌐 Web Dashboard Kholein', url: `${frontendWebUrl}?user_id=${userId}` }]
-            ]
-        };
-
-        const welcomeText = `👋 <b>Namaste ${firstName}!</b>\n\nWelcome to <b>BSEB 10th PDF Unlock Hub</b>.\n\n` +
-            `📌 <b>Kaise Kaam Karta Hai?</b>\n` +
-            `1. Channel join karein: ${CHANNEL_URL}\n` +
-            `2. Apne dosto ko apna referral link share karein.\n` +
-            `3. Har 1 Verified Referral par 1 PDF unlock hoga (Total 9 PDFs).\n\n` +
-            `🔗 <b>Aapka Unique Referral Link:</b>\n<code>https://t.me/${BOT_USERNAME}?start=REF_${userId}</code>`;
-
-        await sendMessage(chatId, welcomeText, replyMarkup);
-    } 
-    // Command: /referral
-    else if (text === '/referral') {
-        const refLink = `https://t.me/${BOT_USERNAME}?start=REF_${userId}`;
-        const refCount = user.verified_referrals || 0;
-
-        const refText = `🔗 <b>Aapka Referral Status:</b>\n\n` +
-            `• Verified Direct Referrals: <b>${refCount}</b>\n` +
-            `• Unlocked PDFs: <b>${Math.min(refCount, 9)} / 9</b>\n\n` +
-            `<b>Aapka Shareable Link:</b>\n<code>${refLink}</code>`;
-
-        await sendMessage(chatId, refText, {
-            inline_keyboard: [
-                [{ text: '📲 Dosto Ko Share Karein', url: `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('BSEB 10th ke sabhi notes free mein unlock karne ke liye is link par click karein!')}` }]
-            ]
-        });
-    }
-    // Command: /status
-    else if (text === '/status') {
-        const isMember = await checkChannelMembership(userId);
-        const refCount = user.verified_referrals || 0;
-        
-        const statusText = `📊 <b>Aapka Profile Status:</b>\n\n` +
-            `• Name: <b>${firstName}</b>\n` +
-            `• Username: <b>@${username || 'N/A'}</b>\n` +
-            `• Channel Member: <b>${isMember ? '✅ Joined' : '❌ Not Joined'}</b>\n` +
-            `• Verified Referrals: <b>${refCount}</b>\n` +
-            `• Unlocked PDFs: <b>${Math.min(refCount, 9)} / 9</b>`;
-
-        await sendMessage(chatId, statusText);
-    }
-    // Command: /help
-    else if (text === '/help') {
-        const helpText = `❓ <b>Madad & Instructions:</b>\n\n` +
-            `• /start - Bot restart karein aur apna link payein\n` +
-            `• /referral - Apna referral status check karein\n` +
-            `• /status - Channel join status dekhein\n\n` +
-            `Har verified direct referral par ek naya educational PDF unlock hota hai!`;
-
-        await sendMessage(chatId, helpText);
-    }
-
-    res.sendStatus(200);
+    // Redirect to frontend dashboard with user_id
+    const frontendUrl = process.env.FRONTEND_URL || 'https://book-referal.vercel.app';
+    res.redirect(`${frontendUrl}?user_id=${userId}`);
 });
 
-// REST API for Web Dashboard
 app.get('/api/me/dashboard', async (req, res) => {
     const userId = req.query.user_id;
-    if (!userId) {
-        return res.status(400).json({ error: 'user_id query parameter is required' });
-    }
+    if (!userId) return res.status(400).json({ error: 'user_id required' });
 
     let user = await getFirebaseData(`users/${userId}`);
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     const isMember = await checkChannelMembership(userId);
     const verifiedCount = user.verified_referrals || 0;
@@ -277,6 +140,7 @@ app.get('/api/me/dashboard', async (req, res) => {
             telegram_id: user.telegram_id,
             username: user.username,
             first_name: user.first_name,
+            photo_url: user.photo_url || '',
             verified_referrals: verifiedCount,
             unlocked_pdfs_count: Math.min(verifiedCount, 9),
             referral_link: `https://t.me/${BOT_USERNAME}?start=REF_${user.telegram_id}`,
@@ -286,23 +150,34 @@ app.get('/api/me/dashboard', async (req, res) => {
     });
 });
 
-// Verify Membership API Call from Website Dashboard
 app.post('/api/referrals/verify', async (req, res) => {
     const { user_id } = req.body;
-    if (!user_id) {
-        return res.status(400).json({ error: 'user_id is required' });
+    if (!user_id) return res.status(400).json({ error: 'user_id required' });
+
+    const user = await getFirebaseData(`users/${user_id}`);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const isMember = await checkChannelMembership(user_id);
+    if (!isMember) {
+        return res.json({ success: false, message: 'Pehle Telegram channel join karein!' });
     }
 
-    const result = await processReferralVerification(user_id);
-    res.json(result);
-});
+    await updateFirebaseData(`users/${user_id}`, { is_channel_member: true });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({ status: 'OK', timestamp: new Date().toISOString() });
+    if (user.referred_by && !user.referral_credited) {
+        const referrerId = user.referred_by;
+        if (referrerId !== String(user_id)) {
+            const referrer = await getFirebaseData(`users/${referrerId}`);
+            if (referrer) {
+                const newCount = (referrer.verified_referrals || 0) + 1;
+                await updateFirebaseData(`users/${referrerId}`, { verified_referrals: newCount });
+                await updateFirebaseData(`users/${user_id}`, { referral_credited: true });
+            }
+        }
+    }
+
+    res.json({ success: true, message: 'Verification successful!' });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Bot Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
