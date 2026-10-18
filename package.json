@@ -1,0 +1,16 @@
+{
+"name": "hrry-referral-bot",
+"version": "1.0.0",
+"private": true,
+"type": "module",
+"scripts": {
+"start": "node index.js"
+},
+"engines": {
+"node": ">=22"
+},
+"dependencies": {
+"express": "^5.1.0",
+"pg": "^8.16.3"
+}
+}
