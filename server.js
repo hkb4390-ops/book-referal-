@@ -1,183 +1,378 @@
+'use strict';
+/**
+ * Referral-Based Educational PDF Unlock Platform — backend
+ * Node 18+ / Express. Firebase Realtime Database via REST, Telegram Bot API via fetch.
+ */
 const express = require('express');
-const axios = require('axios');
 const crypto = require('crypto');
-const cors = require('cors');
-require('dotenv').config();
 
-const app = express();
-app.use(express.json());
-app.use(cors({
-    origin: process.env.FRONTEND_URL || '*',
-    credentials: true
-}));
+/* ------------------------------------------------------------------ */
+/* Configuration                                                       */
+/* ------------------------------------------------------------------ */
+const env = process.env;
+const BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
+const BOT_USERNAME = (env.TELEGRAM_BOT_USERNAME || 'hrrrrrrrrry_bot').replace(/^@/, '');
+const CHANNEL_ID = env.TELEGRAM_CHANNEL_ID || '-1004498096954';
+const CHANNEL_URL = env.TELEGRAM_CHANNEL_URL || 'https://t.me/hrbseb10thallcorse';
+const DB_URL = (env.FIREBASE_DATABASE_URL || '').replace(/\/+$/, '');
+const DB_SECRET = env.FIREBASE_DATABASE_SECRET || ''; // optional, only if your DB rules are locked
+const FRONTEND_URL = (env.FRONTEND_URL || '').replace(/\/+$/, '');
+const BACKEND_URL = (env.BACKEND_URL || '').replace(/\/+$/, '');
+const PORT = Number(env.PORT) || 3000;
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'hrrrrrrrrry_bot';
-const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || '-1004498096954';
-const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/hrbseb10thallcorse';
-const FIREBASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://hrry-store-default-rtdb.firebaseio.com';
+for (const [k, v] of Object.entries({ TELEGRAM_BOT_TOKEN: BOT_TOKEN, FIREBASE_DATABASE_URL: DB_URL, FRONTEND_URL })) {
+  if (!v) { console.error(`Missing required env var: ${k}`); process.exit(1); }
+}
 
-const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
-
-const PDF_REWARDS = [
-    { id: 1, req: 1, subject: 'Economics', title: 'PDF 1 - Economics', url: 'https://drive.google.com/file/d/1hbKSxeX6SWK0lpSWHo21vNK8l9F5IXJ9/view?usp=drivesdk' },
-    { id: 2, req: 2, subject: 'Physics', title: 'PDF 2 - Physics', url: 'https://drive.google.com/file/d/1PN9LaQCaWWCfV7xdNCb8PgC671Fs7hdQ/view?usp=drivesdk' },
-    { id: 3, req: 3, subject: 'Civics', title: 'PDF 3 - Civics', url: 'https://drive.google.com/file/d/1_t7x5irxluEdx7ugxo2lbdLctFss0dWD/view?usp=drivesdk' },
-    { id: 4, req: 4, subject: 'History', title: 'PDF 4 - History', url: 'https://drive.google.com/file/d/1AujJJqkmWFl9cFeB4_MsQ9ffU2m40vsB/view?usp=drivesdk' },
-    { id: 5, req: 5, subject: 'Maths', title: 'PDF 5 - Maths', url: 'https://drive.google.com/file/d/1bI5Siizo_vqftacfvZ_HR7vY3bDcgzMa/view?usp=drivesdk' },
-    { id: 6, req: 6, subject: 'Chemistry', title: 'PDF 6 - Chemistry', url: 'https://drive.google.com/file/d/1O890P8zKHkRk0jmaPp4cxGHvGn-lI8OY/view?usp=drivesdk' },
-    { id: 7, req: 7, subject: 'Biology', title: 'PDF 7 - Biology', url: 'https://drive.google.com/file/d/1oP8A7XC6-aPkZCwJLhAF_c2uNqXmdXzp/view?usp=drivesdk' },
-    { id: 8, req: 8, subject: 'Sanskrit', title: 'PDF 8 - Sanskrit', url: 'https://drive.google.com/file/d/1X0CZR2AZ33EuEHAhFtzi9wYpsBts6FjB/view?usp=drivesdk' },
-    { id: 9, req: 9, subject: 'English', title: 'PDF 9 - English', url: 'https://drive.google.com/file/d/1GSTyzCiPRwcmfGiaFR-NJRBe2El5UVEj/view?usp=drivesdk' }
+/* ------------------------------------------------------------------ */
+/* PDF catalogue (links never leave the server until unlocked)         */
+/* ------------------------------------------------------------------ */
+const PDFS = [
+  { id: 1, subject: 'Economics', required: 1, url: 'https://drive.google.com/file/d/1hbKSxeX6SWK0lpSWHo21vNK8l9F5IXJ9/view?usp=drivesdk' },
+  { id: 2, subject: 'Physics',   required: 2, url: 'https://drive.google.com/file/d/1PN9LaQCaWWCfV7xdNCb8PgC671Fs7hdQ/view?usp=drivesdk' },
+  { id: 3, subject: 'Civics',    required: 3, url: 'https://drive.google.com/file/d/1_t7x5irxluEdx7ugxo2lbdLctFss0dWD/view?usp=drivesdk' },
+  { id: 4, subject: 'History',   required: 4, url: 'https://drive.google.com/file/d/1AujJJqkmWFl9cFeB4_MsQ9ffU2m40vsB/view?usp=drivesdk' },
+  { id: 5, subject: 'Maths',     required: 5, url: 'https://drive.google.com/file/d/1bI5Siizo_vqftacfvZ_HR7vY3bDcgzMa/view?usp=drivesdk' },
+  { id: 6, subject: 'Chemistry', required: 6, url: 'https://drive.google.com/file/d/1O890P8zKHkRk0jmaPp4cxGHvGn-lI8OY/view?usp=drivesdk' },
+  { id: 7, subject: 'Biology',   required: 7, url: 'https://drive.google.com/file/d/1oP8A7XC6-aPkZCwJLhAF_c2uNqXmdXzp/view?usp=drivesdk' },
+  { id: 8, subject: 'Sanskrit',  required: 8, url: 'https://drive.google.com/file/d/1X0CZR2AZ33EuEHAhFtzi9wYpsBts6FjB/view?usp=drivesdk' },
+  { id: 9, subject: 'English',   required: 9, url: 'https://drive.google.com/file/d/1GSTyzCiPRwcmfGiaFR-NJRBe2El5UVEj/view?usp=drivesdk' },
 ];
 
-async function getFirebaseData(path) {
-    try {
-        const res = await axios.get(`${FIREBASE_URL}/${path}.json`);
-        return res.data;
-    } catch (e) { return null; }
+/* ------------------------------------------------------------------ */
+/* Firebase Realtime Database (REST)                                   */
+/* ------------------------------------------------------------------ */
+function dbUrl(path) {
+  const u = new URL(`${DB_URL}/${path}.json`);
+  if (DB_SECRET) u.searchParams.set('auth', DB_SECRET);
+  return u.toString();
+}
+async function dbGet(path) {
+  const r = await fetch(dbUrl(path));
+  if (!r.ok) throw new Error(`DB GET ${path} failed: ${r.status}`);
+  return r.json();
+}
+async function dbPut(path, value) {
+  const r = await fetch(dbUrl(path), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
+  if (!r.ok) throw new Error(`DB PUT ${path} failed: ${r.status}`);
+  return r.json();
+}
+async function dbPatch(path, value) {
+  const r = await fetch(dbUrl(path), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
+  if (!r.ok) throw new Error(`DB PATCH ${path} failed: ${r.status}`);
+  return r.json();
+}
+/** Atomic create-if-absent using Firebase ETags. Returns true only for the single winner. */
+async function dbClaim(path, value) {
+  const g = await fetch(dbUrl(path), { headers: { 'X-Firebase-ETag': 'true' } });
+  if (!g.ok) throw new Error(`DB claim read ${path} failed: ${g.status}`);
+  const etag = g.headers.get('etag');
+  const current = await g.json();
+  if (current !== null) return false;
+  const p = await fetch(dbUrl(path), {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'if-match': etag },
+    body: JSON.stringify(value),
+  });
+  return p.ok; // 412 => someone else won the race
 }
 
-async function setFirebaseData(path, data) {
-    try {
-        await axios.put(`${FIREBASE_URL}/${path}.json`, data);
-        return true;
-    } catch (e) { return false; }
+/* ------------------------------------------------------------------ */
+/* Telegram helpers                                                    */
+/* ------------------------------------------------------------------ */
+async function tg(method, body) {
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  return r.json();
+}
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const send = (chatId, text, extra = {}) =>
+  tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra })
+    .catch((e) => console.error('sendMessage failed', e.message));
+
+/* Signed dashboard links: user IDs are public (they appear in referral links),
+   so the dashboard URL carries an HMAC that only the bot can mint. */
+const signKey = 'dashboard:' + BOT_TOKEN;
+const signUser = (id) => crypto.createHmac('sha256', signKey).update(String(id)).digest('hex').slice(0, 32);
+function validSig(id, sig) {
+  if (typeof sig !== 'string' || sig.length !== 32) return false;
+  const a = Buffer.from(signUser(id));
+  const b = Buffer.from(sig);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+const dashboardUrl = (id) => `${FRONTEND_URL}?user_id=${id}&sig=${signUser(id)}`;
+const referralLink = (id) => `https://t.me/${BOT_USERNAME}?start=REF_${id}`;
+
+/* ------------------------------------------------------------------ */
+/* Domain logic                                                        */
+/* ------------------------------------------------------------------ */
+async function ensureUser(from, refId) {
+  const id = String(from.id);
+  const profile = { firstName: from.first_name || '', lastName: from.last_name || '', username: from.username || '' };
+
+  let referredBy = null;
+  if (refId && /^\d+$/.test(refId) && refId !== id) {
+    const exists = await dbGet(`users/${refId}/id`);
+    if (exists) referredBy = refId;
+  }
+  const fresh = { id, ...profile, createdAt: Date.now(), channelVerified: false };
+  if (referredBy) fresh.referredBy = referredBy;
+
+  const created = await dbClaim(`users/${id}`, fresh); // referrer is locked in only at first registration
+  if (created) return fresh;
+
+  await dbPatch(`users/${id}`, profile);
+  const existing = await dbGet(`users/${id}`);
+  return { ...existing, ...profile };
 }
 
-async function updateFirebaseData(path, data) {
-    try {
-        await axios.patch(`${FIREBASE_URL}/${path}.json`, data);
-        return true;
-    } catch (e) { return false; }
+async function countVerified(userId) {
+  const r = await dbGet(`referrals/${userId}`);
+  return r ? Object.keys(r).length : 0;
 }
 
-async function checkChannelMembership(telegramUserId) {
-    try {
-        let formattedChannelId = CHANNEL_ID;
-        if (!formattedChannelId.startsWith('-')) formattedChannelId = `-100${formattedChannelId}`;
-        const res = await axios.get(`${TELEGRAM_API}/getChatMember`, { params: { chat_id: formattedChannelId, user_id: telegramUserId } });
-        if (res.data && res.data.ok) {
-            return ['creator', 'administrator', 'member'].includes(res.data.result.status);
-        }
-    } catch (error) {}
-    return false;
+async function checkMembership(userId) {
+  const r = await tg('getChatMember', { chat_id: CHANNEL_ID, user_id: Number(userId) });
+  if (!r.ok) return { ok: false, error: r.description || 'Telegram API error' };
+  const s = r.result.status;
+  const member = ['creator', 'administrator', 'member'].includes(s) || (s === 'restricted' && r.result.is_member === true);
+  return { ok: true, member };
 }
 
-// Telegram Login Hash Verification Middleware/Function
-function verifyTelegramLogin(query) {
-    const { hash, ...data } = query;
-    const checkString = Object.keys(data)
-        .sort()
-        .map(k => `${k}=${data[k]}`)
-        .join('\n');
-    
-    const secretKey = crypto.createHash('sha256').update(BOT_TOKEN).digest();
-    const hmac = crypto.createHmac('sha256', secretKey).update(checkString).digest('hex');
-    
-    return hmac === hash;
-}
+async function verifyAndCredit(userId) {
+  const user = await dbGet(`users/${userId}`);
+  if (!user) return { status: 'not_found' };
 
-// Telegram Login Callback Endpoint
-app.get('/api/auth/telegram/callback', async (req, res) => {
-    const query = req.query;
-    if (!query.id || !verifyTelegramLogin(query)) {
-        return res.status(403).send('Invalid Telegram Authentication');
+  const m = await checkMembership(userId);
+  if (!m.ok) return { status: 'check_failed', message: m.error };
+  if (!m.member) {
+    await dbPatch(`users/${userId}`, { channelVerified: false });
+    return { status: 'not_member' };
+  }
+
+  await dbPatch(`users/${userId}`, { channelVerified: true, verifiedAt: user.verifiedAt || Date.now() });
+
+  let credited = false;
+  const referrerId = user.referredBy ? String(user.referredBy) : null;
+  if (referrerId && referrerId !== String(userId)) {
+    // Lifetime idempotency: one credit record per referred user, ever.
+    const record = { referrerId, at: Date.now() };
+    credited = await dbClaim(`referralCredits/${userId}`, record);
+    const credit = credited ? record : await dbGet(`referralCredits/${userId}`);
+    if (credit && credit.referrerId === referrerId) {
+      await dbPut(`referrals/${referrerId}/${userId}`, { verified: true, at: credit.at });
     }
+    if (credited) notifyReferrer(referrerId, user).catch((e) => console.error('notify failed', e.message));
+  }
+  return { status: 'verified', credited };
+}
 
-    const userId = String(query.id);
-    const firstName = query.first_name || 'User';
-    const username = query.username || '';
-    const photoUrl = query.photo_url || '';
+async function notifyReferrer(referrerId, referred) {
+  const count = await countVerified(referrerId);
+  const name = esc([referred.firstName, referred.lastName].filter(Boolean).join(' ') || 'A friend');
+  const newPdf = PDFS.find((p) => p.required === count);
+  let text = `🎉 <b>${name}</b> joined the channel through your link!\nVerified referrals: <b>${count}/9</b>`;
+  if (newPdf) text += `\n🔓 Unlocked: <b>PDF ${newPdf.id} (${newPdf.subject})</b>`;
+  await send(referrerId, text, { reply_markup: mainKeyboard(referrerId) });
+}
 
-    let user = await getFirebaseData(`users/${userId}`);
-    if (!user) {
-        user = {
-            telegram_id: userId,
-            username: username,
-            first_name: firstName,
-            photo_url: photoUrl,
-            verified_referrals: 0,
-            referral_code: `REF_${userId}`,
-            is_channel_member: false,
-            referral_credited: false,
-            created_at: new Date().toISOString()
-        };
-        await setFirebaseData(`users/${userId}`, user);
-    } else {
-        await updateFirebaseData(`users/${userId}`, { first_name: firstName, username, photo_url: photoUrl });
-    }
+function buildDashboard(user, count) {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Student';
+  return {
+    user: {
+      id: String(user.id),
+      name,
+      username: user.username || null,
+      avatarLetter: (name.trim()[0] || 'S').toUpperCase(),
+    },
+    channel: { verified: !!user.channelVerified, url: CHANNEL_URL },
+    referrals: {
+      verified: count,
+      link: referralLink(user.id),
+    },
+    unlockedCount: PDFS.filter((p) => count >= p.required).length,
+    totalPdfs: PDFS.length,
+    pdfs: PDFS.map((p) => {
+      const unlocked = count >= p.required;
+      const item = { id: p.id, subject: p.subject, required: p.required, unlocked, remaining: unlocked ? 0 : p.required - count };
+      if (unlocked) item.url = p.url; // locked links are never serialised
+      return item;
+    }),
+  };
+}
 
-    // Redirect to frontend dashboard with user_id
-    const frontendUrl = process.env.FRONTEND_URL || 'https://book-referal.vercel.app';
-    res.redirect(`${frontendUrl}?user_id=${userId}`);
+/* ------------------------------------------------------------------ */
+/* Bot UI                                                              */
+/* ------------------------------------------------------------------ */
+function mainKeyboard(userId) {
+  return {
+    inline_keyboard: [
+      [{ text: '📚 Open Web Dashboard', url: dashboardUrl(userId) }],
+      [{ text: '✅ Verify Membership', callback_data: 'verify' }],
+      [{ text: '📢 Join Channel', url: CHANNEL_URL }],
+    ],
+  };
+}
+
+async function handleVerifyFlow(chatId, userId) {
+  const res = await verifyAndCredit(userId);
+  if (res.status === 'not_found') return send(chatId, 'Please send /start first.');
+  if (res.status === 'check_failed') return send(chatId, '⚠️ Could not check membership right now. Please try again in a moment.');
+  if (res.status === 'not_member') {
+    return send(chatId, '❌ You have not joined the channel yet.\nJoin first, then tap <b>Verify Membership</b>.', { reply_markup: mainKeyboard(userId) });
+  }
+  const count = await countVerified(userId);
+  return send(chatId, `✅ Membership verified!\nYour verified referrals: <b>${count}/9</b>`, { reply_markup: mainKeyboard(userId) });
+}
+
+async function handleMessage(msg) {
+  if (!msg || !msg.from || msg.chat.type !== 'private') return;
+  const chatId = msg.chat.id;
+  const text = (msg.text || '').trim();
+  const cmd = text.match(/^\/(\w+)(?:@\w+)?\s*(.*)$/);
+  if (!cmd) return;
+  const [, command, arg] = cmd;
+
+  if (command === 'start') {
+    const refMatch = arg.match(/^REF_(\d+)$/);
+    const user = await ensureUser(msg.from, refMatch ? refMatch[1] : null);
+    const name = esc(msg.from.first_name || 'there');
+    let welcome = `👋 Welcome, <b>${name}</b>!\n\nInvite friends and unlock free educational PDFs:\n• 1 verified referral = 1 PDF (up to 9)\n• A referral counts once your friend joins our channel.\n\n`;
+    if (user.referredBy && !user.channelVerified) welcome += '👉 Join the channel and tap <b>Verify Membership</b> to get started.\n\n';
+    welcome += `🔗 Your link:\n${referralLink(user.id)}`;
+    return send(chatId, welcome, { reply_markup: mainKeyboard(user.id) });
+  }
+
+  if (command === 'referral') {
+    const user = await ensureUser(msg.from, null);
+    return send(chatId, `🔗 <b>Your referral link</b>\n${referralLink(user.id)}\n\nEvery friend who starts the bot and joins the channel counts as +1.`, { reply_markup: mainKeyboard(user.id) });
+  }
+
+  if (command === 'status') {
+    const user = await ensureUser(msg.from, null);
+    const count = await countVerified(user.id);
+    const unlocked = PDFS.filter((p) => count >= p.required);
+    const next = PDFS.find((p) => count < p.required);
+    let t = `📊 <b>Your status</b>\nChannel: ${user.channelVerified ? '✅ verified' : '❌ not verified'}\nVerified referrals: <b>${count}</b>\nPDFs unlocked: <b>${unlocked.length}/9</b>`;
+    if (next) t += `\nNext: <b>PDF ${next.id} (${next.subject})</b> — ${next.required - count} more referral(s)`;
+    else t += '\n🏆 All PDFs unlocked!';
+    return send(chatId, t, { reply_markup: mainKeyboard(user.id) });
+  }
+
+  if (command === 'verify') {
+    await ensureUser(msg.from, null);
+    return handleVerifyFlow(chatId, String(msg.from.id));
+  }
+
+  if (command === 'help') {
+    return send(chatId, '<b>Commands</b>\n/start – register / open dashboard\n/referral – your invite link\n/status – progress &amp; unlocks\n/verify – check channel membership\n/help – this message');
+  }
+}
+
+async function handleCallback(cq) {
+  if (!cq || !cq.from) return;
+  await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Checking membership…' }).catch(() => {});
+  if (cq.data === 'verify' && cq.message) {
+    await ensureUser(cq.from, null);
+    await handleVerifyFlow(cq.message.chat.id, String(cq.from.id));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* HTTP server                                                         */
+/* ------------------------------------------------------------------ */
+const app = express();
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '100kb' }));
+
+const allowedOrigin = new URL(FRONTEND_URL).origin;
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && origin === allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
 });
+
+app.get('/health', (_req, res) => res.json({ ok: true, time: Date.now() }));
+
+/* Webhook: intentionally NOT gated on any header, so a secret-token mismatch can never produce a 403.
+   Always answers 200 so Telegram never retries/blocks the queue. */
+app.post('/api/telegram/webhook', (req, res) => {
+  res.sendStatus(200);
+  const update = req.body || {};
+  Promise.resolve()
+    .then(() => (update.callback_query ? handleCallback(update.callback_query) : handleMessage(update.message)))
+    .catch((e) => console.error('update failed:', e.message));
+});
+
+function authUser(source, res) {
+  const id = String(source.user_id || '');
+  if (!/^\d{1,20}$/.test(id)) { res.status(400).json({ error: 'invalid_user_id' }); return null; }
+  if (!validSig(id, source.sig)) { res.status(401).json({ error: 'invalid_link', message: 'Please open the dashboard from the bot.' }); return null; }
+  return id;
+}
 
 app.get('/api/me/dashboard', async (req, res) => {
-    const userId = req.query.user_id;
-    if (!userId) return res.status(400).json({ error: 'user_id required' });
-
-    let user = await getFirebaseData(`users/${userId}`);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const isMember = await checkChannelMembership(userId);
-    const verifiedCount = user.verified_referrals || 0;
-
-    const pdfs = PDF_REWARDS.map(pdf => {
-        const isUnlocked = verifiedCount >= pdf.req;
-        return {
-            id: pdf.id,
-            subject: pdf.subject,
-            title: pdf.title,
-            required_referrals: pdf.req,
-            is_unlocked: isUnlocked,
-            download_url: isUnlocked ? pdf.url : null
-        };
-    });
-
-    res.json({
-        user: {
-            telegram_id: user.telegram_id,
-            username: user.username,
-            first_name: user.first_name,
-            photo_url: user.photo_url || '',
-            verified_referrals: verifiedCount,
-            unlocked_pdfs_count: Math.min(verifiedCount, 9),
-            referral_link: `https://t.me/${BOT_USERNAME}?start=REF_${user.telegram_id}`,
-            is_channel_member: isMember
-        },
-        pdfs: pdfs
-    });
+  try {
+    const id = authUser(req.query, res);
+    if (!id) return;
+    const user = await dbGet(`users/${id}`);
+    if (!user) return res.status(404).json({ error: 'user_not_found', message: 'Send /start to the bot first.' });
+    res.set('Cache-Control', 'no-store');
+    res.json(buildDashboard(user, await countVerified(id)));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server_error' });
+  }
 });
 
+const lastVerify = new Map();
 app.post('/api/referrals/verify', async (req, res) => {
-    const { user_id } = req.body;
-    if (!user_id) return res.status(400).json({ error: 'user_id required' });
+  try {
+    const id = authUser(req.body || {}, res);
+    if (!id) return;
+    const now = Date.now();
+    if (now - (lastVerify.get(id) || 0) < 3000) return res.status(429).json({ error: 'slow_down' });
+    lastVerify.set(id, now);
 
-    const user = await getFirebaseData(`users/${user_id}`);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    const result = await verifyAndCredit(id);
+    if (result.status === 'not_found') return res.status(404).json({ error: 'user_not_found' });
+    if (result.status === 'check_failed') return res.status(502).json({ error: 'telegram_check_failed', message: result.message });
 
-    const isMember = await checkChannelMembership(user_id);
-    if (!isMember) {
-        return res.json({ success: false, message: 'Pehle Telegram channel join karein!' });
-    }
-
-    await updateFirebaseData(`users/${user_id}`, { is_channel_member: true });
-
-    if (user.referred_by && !user.referral_credited) {
-        const referrerId = user.referred_by;
-        if (referrerId !== String(user_id)) {
-            const referrer = await getFirebaseData(`users/${referrerId}`);
-            if (referrer) {
-                const newCount = (referrer.verified_referrals || 0) + 1;
-                await updateFirebaseData(`users/${referrerId}`, { verified_referrals: newCount });
-                await updateFirebaseData(`users/${user_id}`, { referral_credited: true });
-            }
-        }
-    }
-
-    res.json({ success: true, message: 'Verification successful!' });
+    const user = await dbGet(`users/${id}`);
+    res.set('Cache-Control', 'no-store');
+    res.json({ status: result.status, credited: !!result.credited, dashboard: buildDashboard(user, await countVerified(id)) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server_error' });
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`Server listening on :${PORT}`);
+  try {
+    if (BACKEND_URL) {
+      const wh = await tg('setWebhook', { url: `${BACKEND_URL}/api/telegram/webhook`, allowed_updates: ['message', 'callback_query'] });
+      console.log('setWebhook:', wh.ok ? 'ok' : wh.description);
+    }
+    await tg('setMyCommands', {
+      commands: [
+        { command: 'start', description: 'Register & open dashboard' },
+        { command: 'referral', description: 'Get your referral link' },
+        { command: 'status', description: 'Your progress & unlocks' },
+        { command: 'verify', description: 'Verify channel membership' },
+        { command: 'help', description: 'Help' },
+      ],
+    });
+  } catch (e) {
+    console.error('Startup Telegram setup failed:', e.message);
+  }
+});
