@@ -109,7 +109,7 @@ async function processReferralVerification(userId) {
 
     const isMember = await checkChannelMembership(userId);
     if (!isMember) {
-        return { success: false, message: 'Telegram channel join karo pehle verification ke liye.' };
+        return { success: false, message: 'Pehle Telegram channel join karein, tabhi verification successful hogi!' };
     }
 
     await updateFirebaseData(`users/${userId}`, { is_channel_member: true });
@@ -133,16 +133,16 @@ async function processReferralVerification(userId) {
 
                 await sendMessage(
                     referrerId,
-                    `🎉 <b>Naya Verified Referral!</b>\n\nAapko 1 direct referral credit mila hai.\nAapke kul verified referrals: <b>${newCount}</b>\n\nDashboard par jaakar dekhein kitne PDFs unlock hue!`
+                    `🎉 <b>Naya Verified Referral!</b>\n\nAapko 1 direct referral credit mil gaya hai.\nKul verified referrals: <b>${newCount}</b>\n\nAb website par jaakar apne PDFs check karein!`
                 );
             }
         }
     }
 
-    return { success: true, message: 'Account & Membership verified successfully!' };
+    return { success: true, message: 'Account aur Channel Membership successfully verify ho gayi hai!' };
 }
 
-// Telegram Webhook Endpoint (403 Forbidden error completely fixed here)
+// Telegram Webhook Endpoint
 app.post('/api/telegram/webhook', async (req, res) => {
     const { message } = req.body;
     if (!message || !message.from) {
@@ -183,20 +183,21 @@ app.post('/api/telegram/webhook', async (req, res) => {
             }
         }
 
+        const frontendWebUrl = process.env.FRONTEND_URL || 'https://book-referal.vercel.app';
+        
         const replyMarkup = {
             inline_keyboard: [
                 [{ text: '📢 Channel Join Karein', url: CHANNEL_URL }],
-                [{ text: '🌐 Dashboard Open Karein', url: `${process.env.FRONTEND_URL || 'https://book-referal.onrender.com'}?user_id=${userId}` }],
-                [{ text: '🔄 Verify Membership', callback_data: 'verify_membership' }]
+                [{ text: '🌐 Web Dashboard Kholein', url: `${frontendWebUrl}?user_id=${userId}` }]
             ]
         };
 
-        const welcomeText = `👋 <b>Namaste ${firstName}!</b>\n\nWelcome to <b>PDF Unlock Platform</b>.\n\n` +
-            `📌 <b>Niyam (Rules):</b>\n` +
+        const welcomeText = `👋 <b>Namaste ${firstName}!</b>\n\nWelcome to <b>BSEB 10th PDF Unlock Hub</b>.\n\n` +
+            `📌 <b>Kaise Kaam Karta Hai?</b>\n` +
             `1. Channel join karein: ${CHANNEL_URL}\n` +
-            `2. Apne dosto ko apne unique link se invite karein.\n` +
-            `3. Har 1 Verified Direct Referral par 1 PDF unlock hoga (Kul 9 PDFs).\n\n` +
-            `Aapka Unique Referral Link:\n<code>https://t.me/${BOT_USERNAME}?start=REF_${userId}</code>`;
+            `2. Apne dosto ko apna referral link share karein.\n` +
+            `3. Har 1 Verified Referral par 1 PDF unlock hoga (Total 9 PDFs).\n\n` +
+            `🔗 <b>Aapka Unique Referral Link:</b>\n<code>https://t.me/${BOT_USERNAME}?start=REF_${userId}</code>`;
 
         await sendMessage(chatId, welcomeText, replyMarkup);
     } 
@@ -206,14 +207,13 @@ app.post('/api/telegram/webhook', async (req, res) => {
         const refCount = user.verified_referrals || 0;
 
         const refText = `🔗 <b>Aapka Referral Status:</b>\n\n` +
-            `• Direct Verified Referrals: <b>${refCount}</b>\n` +
+            `• Verified Direct Referrals: <b>${refCount}</b>\n` +
             `• Unlocked PDFs: <b>${Math.min(refCount, 9)} / 9</b>\n\n` +
-            `<b>Aapka Link:</b>\n<code>${refLink}</code>\n\n` +
-            `Is link ko dosto ko bhejein aur PDFs unlock karein!`;
+            `<b>Aapka Shareable Link:</b>\n<code>${refLink}</code>`;
 
         await sendMessage(chatId, refText, {
             inline_keyboard: [
-                [{ text: '📲 Share Link', url: `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('Join & Unlock 10th BSEB Notes!')}` }]
+                [{ text: '📲 Dosto Ko Share Karein', url: `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('BSEB 10th ke sabhi notes free mein unlock karne ke liye is link par click karein!')}` }]
             ]
         });
     }
@@ -227,20 +227,17 @@ app.post('/api/telegram/webhook', async (req, res) => {
             `• Username: <b>@${username || 'N/A'}</b>\n` +
             `• Channel Member: <b>${isMember ? '✅ Joined' : '❌ Not Joined'}</b>\n` +
             `• Verified Referrals: <b>${refCount}</b>\n` +
-            `• Unlocked PDFs: <b>${Math.min(refCount, 9)}</b>`;
+            `• Unlocked PDFs: <b>${Math.min(refCount, 9)} / 9</b>`;
 
         await sendMessage(chatId, statusText);
     }
     // Command: /help
     else if (text === '/help') {
-        const helpText = `❓ <b>Madad Chahiye?</b>\n\n` +
-            `• /start - Bot ko restart karein aur link payein\n` +
-            `• /referral - Apna referral link aur points dekhein\n` +
-            `• /status - Apni account verification check karein\n\n` +
-            `<b>Kaise Kam Karta Hai?</b>\n` +
-            `1. Channel join karna compulsion hai.\n` +
-            `2. Direct refer karne par hi count badhega.\n` +
-            `3. Downline (multi-level) ka koi point nahi milega.`;
+        const helpText = `❓ <b>Madad & Instructions:</b>\n\n` +
+            `• /start - Bot restart karein aur apna link payein\n` +
+            `• /referral - Apna referral status check karein\n` +
+            `• /status - Channel join status dekhein\n\n` +
+            `Har verified direct referral par ek naya educational PDF unlock hota hai!`;
 
         await sendMessage(chatId, helpText);
     }
@@ -248,7 +245,7 @@ app.post('/api/telegram/webhook', async (req, res) => {
     res.sendStatus(200);
 });
 
-// REST API for Frontend Dashboard
+// REST API for Web Dashboard
 app.get('/api/me/dashboard', async (req, res) => {
     const userId = req.query.user_id;
     if (!userId) {
@@ -289,7 +286,7 @@ app.get('/api/me/dashboard', async (req, res) => {
     });
 });
 
-// Verify Membership API Call from Dashboard
+// Verify Membership API Call from Website Dashboard
 app.post('/api/referrals/verify', async (req, res) => {
     const { user_id } = req.body;
     if (!user_id) {
@@ -307,5 +304,5 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`Bot Server is running on port ${PORT}`);
 });
