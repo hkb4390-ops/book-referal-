@@ -1,864 +1,291 @@
 'use strict';
 
-require('dotenv').config();
-
 const crypto = require('crypto');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const TelegramBot = require('node-telegram-bot-api');
-const admin = require('firebase-admin');
-const path = require('path');
 const { Readable } = require('stream');
+const admin = require('firebase-admin');
 
+const {
+  TELEGRAM_BOT_TOKEN,
+  FIREBASE_SERVICE_ACCOUNT_JSON,
+  WEBSITE_URL
+} = process.env;
+
+const BOT_USERNAME = 'hrrrrrrrrry_bot';
+const CHANNEL_URL = 'https://t.me/hrbseb10thallcorse';
+const TELEGRAM_CHANNEL_ID = '@hrbseb10thallcorse';
+const DATABASE_URL = 'https://hrushs-default-rtdb.firebaseio.com/';
+
+if (!TELEGRAM_BOT_TOKEN || !FIREBASE_SERVICE_ACCOUNT_JSON || !WEBSITE_URL) {
+  console.error('Missing environment variables. Add TELEGRAM_BOT_TOKEN, FIREBASE_SERVICE_ACCOUNT_JSON and WEBSITE_URL in Render.');
+  process.exit(1);
+}
+if (!/^https:\/\//i.test(WEBSITE_URL)) {
+  console.error('WEBSITE_URL must be your Vercel HTTPS website URL, e.g. https://your-project.vercel.app');
+  process.exit(1);
+}
+
+const websiteUrl = WEBSITE_URL.replace(/\/+$/, '');
+const tokenSecret = crypto.createHash('sha256').update(`dashboard-token-v1:${TELEGRAM_BOT_TOKEN}`).digest();
+const serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT_JSON);
+if (!admin.apps.length) {
+  admin.initializeApp({ credential: admin.credential.cert(serviceAccount), databaseURL: DATABASE_URL });
+}
+const db = admin.database();
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 const app = express();
-
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-
-const PORT = Number(process.env.PORT || 3000);
-
-const BASE_URL = (
-process.env.BASE_URL || ''
-).replace(//+$/, '');
-
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
-const BOT_USERNAME = (
-process.env.TELEGRAM_BOT_USERNAME || 'hrrrrrrrrry_bot'
-).replace(/^@/, '');
-
-const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-
-const CHANNEL_URL =
-process.env.TELEGRAM_CHANNEL_URL ||
-'https://t.me/hrbseb10thallcorse';
-
-const DASHBOARD_TOKEN_SECRET =
-process.env.DASHBOARD_TOKEN_SECRET;
-
-const SERVICE_ACCOUNT_JSON =
-process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-
-if (
-!BASE_URL ||
-!BOT_TOKEN ||
-!CHANNEL_ID ||
-!SERVICE_ACCOUNT_JSON ||
-!DASHBOARD_TOKEN_SECRET ||
-Buffer.byteLength(DASHBOARD_TOKEN_SECRET) < 32
-) {
-throw new Error(
-'Missing required environment variables. Check Render Environment settings.'
-);
-}
-
-if (!BASE_URL.startsWith('https://')) {
-throw new Error('BASE_URL must use HTTPS in production.');
-}
-
-const serviceAccount = JSON.parse(SERVICE_ACCOUNT_JSON);
-
-admin.initializeApp({
-credential: admin.credential.cert(serviceAccount),
-databaseURL: 'https://hrushs-default-rtdb.firebaseio.com/'
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(express.json({ limit: '12kb' }));
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
 });
-
-const db = admin.database();
-
-const bot = new TelegramBot(BOT_TOKEN, {
-polling: true
-});
-
-app.use(
-helmet({
-contentSecurityPolicy: {
-directives: {
-defaultSrc: ["'self'"],
-scriptSrc: ["'self'"],
-styleSrc: ["'self'", "'unsafe-inline'"],
-imgSrc: ["'self'", 'data:'],
-connectSrc: ["'self'"],
-objectSrc: ["'none'"],
-frameAncestors: ["'none'"],
-baseUri: ["'self'"],
-formAction: ["'self'"]
-}
-},
-crossOriginEmbedderPolicy: false
-})
-);
-
-app.use(express.json({ limit: '16kb' }));
-
-app.use(
-'/api/',
-rateLimit({
-windowMs: 60 * 1000,
-limit: 60,
-standardHeaders: 'draft-7',
-legacyHeaders: false
-})
-);
-
-// PDF file IDs are backend-only.
-// Do not move these values into index.html.
+app.use('/api/', rateLimit({ windowMs: 60_000, limit: 50, standardHeaders: true, legacyHeaders: false }));
 
 const SUBJECTS = [
-{
-id: 'economics',
-name: 'Economics (10 Bhramastra)',
-driveId: '1hbKSxeX6SWK0lpSWHo21vNK8l9F5IXJ9'
-},
-{
-id: 'physics',
-name: 'Physics',
-driveId: '1PN9LaQCaWWCfV7xdNCb8PgC671Fs7hdQ'
-},
-{
-id: 'civics',
-name: 'Civics',
-driveId: '1_t7x5irxluEdx7ugxo2lbdLctFss0dWD'
-},
-{
-id: 'history',
-name: 'History',
-driveId: '1AujJJqkmWFl9cFeB4_MsQ9ffU2m40vsB'
-},
-{
-id: 'maths',
-name: 'Maths',
-driveId: '1bI5Siizo_vqftacfvZ_HR7vY3bDcgzMa'
-},
-{
-id: 'chemistry',
-name: 'Chemistry',
-driveId: '1O890P8zKHkRk0jmaPp4cxGHvGn-lI8OY'
-},
-{
-id: 'biology',
-name: 'Biology',
-driveId: '1oP8A7XC6-aPkZCwJLhAF_c2uNqXmdXzp'
-},
-{
-id: 'sanskrit',
-name: 'Sanskrit',
-driveId: '1X0CZR2AZ33EuEHAhFtzi9wYpsBts6FjB'
-},
-{
-id: 'english',
-name: 'English',
-driveId: '1GSTyzCiPRwcmfGiaFR-NJRBe2El5UVEj'
-}
+  { id: 'economics', name: 'Economics (10 Bhramastra)', driveId: '1hbKSxeX6SWK0lpSWHo21vNK8l9F5IXJ9' },
+  { id: 'physics', name: 'Physics', driveId: '1PN9LaQCaWWCfV7xdNCb8PgC671Fs7hdQ' },
+  { id: 'civics', name: 'Civics', driveId: '1_t7x5irxluEdx7ugxo2lbdLctFss0dWD' },
+  { id: 'history', name: 'History', driveId: '1AujJJqkmWFl9cFeB4_MsQ9ffU2m40vsB' },
+  { id: 'maths', name: 'Maths', driveId: '1bI5Siizo_vqftacfvZ_HR7vY3bDcgzMa' },
+  { id: 'chemistry', name: 'Chemistry', driveId: '1O890P8zKHkRk0jmaPp4cxGHvGn-lI8OY' },
+  { id: 'biology', name: 'Biology', driveId: '1oP8A7XC6-aPkZCwJLhAF_c2uNqXmdXzp' },
+  { id: 'sanskrit', name: 'Sanskrit', driveId: '1X0CZR2AZ33EuEHAhFtzi9wYpsBts6FjB' },
+  { id: 'english', name: 'English', driveId: '1GSTyzCiPRwcmfGiaFR-NJRBe2El5UVEj' }
 ];
 
-const SUBJECT_MAP = new Map(
-SUBJECTS.map((subject, index) => [
-subject.id,
-{
-...subject,
-requiredReferrals: index + 1
+function signToken(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', tokenSecret).update(body).digest('base64url');
+  return `${body}.${signature}`;
 }
-])
-);
-
-function getUserRef(uid) {
-return db.ref("users/${String(uid)}");
+function verifyToken(token) {
+  if (typeof token !== 'string' || token.length > 2048) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const expected = crypto.createHmac('sha256', tokenSecret).update(parts[0]).digest('base64url');
+  const a = Buffer.from(parts[1]); const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!payload.uid || !Number.isFinite(payload.exp) || payload.exp < Date.now()) return null;
+    return payload;
+  } catch { return null; }
 }
-
-async function getUser(uid) {
-const snapshot = await getUserRef(uid).get();
-
-return snapshot.exists()
-? snapshot.val()
-: null;
-}
-
-function createDashboardToken(uid) {
-const payload = {
-uid: String(uid),
-exp: Date.now() + 7 * 24 * 60 * 60 * 1000
-};
-
-const body = Buffer
-.from(JSON.stringify(payload))
-.toString('base64url');
-
-const signature = crypto
-.createHmac('sha256', DASHBOARD_TOKEN_SECRET)
-.update(body)
-.digest('base64url');
-
-return "${body}.${signature}";
-}
-
-function verifyDashboardToken(token) {
-if (
-typeof token !== 'string' ||
-token.length > 2048
-) {
-return null;
-}
-
-const parts = token.split('.');
-
-if (parts.length !== 2) {
-return null;
-}
-
-const expected = crypto
-.createHmac('sha256', DASHBOARD_TOKEN_SECRET)
-.update(parts[0])
-.digest('base64url');
-
-const suppliedBuffer = Buffer.from(parts[1]);
-const expectedBuffer = Buffer.from(expected);
-
-if (
-suppliedBuffer.length !== expectedBuffer.length ||
-!crypto.timingSafeEqual(
-suppliedBuffer,
-expectedBuffer
-)
-) {
-return null;
-}
-
-try {
-const payload = JSON.parse(
-Buffer.from(parts[0], 'base64url').toString('utf8')
-);
-
-if (
-  !/^\d{1,20}$/.test(String(payload.uid || '')) ||
-  !Number.isFinite(payload.exp) ||
-  payload.exp < Date.now()
-) {
-  return null;
-}
-
-return payload;
-
-} catch {
-return null;
-}
-}
-
 function makeDashboardUrl(uid) {
-const token = createDashboardToken(uid);
-
-return (
-"${BASE_URL}/?token=${encodeURIComponent(token)}"
-);
+  const token = signToken({ uid: String(uid), exp: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+  return `${websiteUrl}/?token=${encodeURIComponent(token)}`;
 }
-
-function parseReferral(parameter, userId) {
-if (
-typeof parameter !== 'string' ||
-!/^ref_\d{1,20}$/.test(parameter)
-) {
-return null;
+function memberIsActive(member) {
+  if (!member) return false;
+  return ['creator', 'administrator', 'member'].includes(member.status) ||
+    (member.status === 'restricted' && member.is_member === true);
 }
-
-const referrerId = parameter.slice(4);
-
-if (referrerId === String(userId)) {
-return null;
-}
-
-return referrerId;
-}
-
-async function createUserIfMissing(
-telegramUser,
-startParameter
-) {
-const uid = String(telegramUser.id);
-const userRef = getUserRef(uid);
-
-const proposedReferrer = parseReferral(
-startParameter,
-uid
-);
-
-const transaction = await userRef.transaction(
-current => {
-if (current !== null) {
-return current;
-}
-
-  return {
-    telegram_id: uid,
-    first_name: String(
-      telegramUser.first_name || 'Student'
-    ).slice(0, 80),
-    referred_by: proposedReferrer,
-    referral_count: 0,
-    joined_channel: 0,
-    created_at: Date.now()
-  };
-},
-undefined,
-false
-
-);
-
-let user = transaction.snapshot.val();
-
-// Only accept referrals from existing users.
-if (user && user.referred_by) {
-const referrer = await getUser(user.referred_by);
-
-if (!referrer) {
-  await userRef.child('referred_by').set(null);
-  user = await getUser(uid);
-}
-
-}
-
-return user;
-}
-
-async function verifyChannelMembership(uid) {
-const member = await bot.getChatMember(
-CHANNEL_ID,
-Number(uid)
-);
-
-return (
-['creator', 'administrator', 'member'].includes(
-member.status
-) ||
-(
-member.status === 'restricted' &&
-member.is_member === true
-)
-);
-}
-
-async function incrementReferralOnce(referrerId, referredId) {
-if (
-!referrerId ||
-String(referrerId) === String(referredId)
-) {
-return null;
-}
-
-// A unique record makes the credit idempotent even if
-// verification callbacks are repeated or retried.
-const creditRef = db.ref(
-"referral_credits/${String(referredId)}"
-);
-
-const creditTransaction = await creditRef.transaction(
-current => {
-if (current !== null) {
-return current;
-}
-
-  return {
-    referrer_id: String(referrerId),
-    referred_id: String(referredId),
-    created_at: Date.now()
-  };
-},
-undefined,
-false
-
-);
-
-if (!creditTransaction.committed) {
-return null;
-}
-
-const countTransaction = await db
-.ref("users/${String(referrerId)}/referral_count")
-.transaction(
-current => Math.max(0, Number(current || 0)) + 1,
-undefined,
-false
-);
-
-return Number(countTransaction.snapshot.val() || 0);
-}
-
-async function sendStartKeyboard(chatId) {
-await bot.sendMessage(
-chatId,
-'Welcome! 👋\n\n' +
-'Join our Telegram channel first, then tap ' +
-'Verify Membership to open your dashboard.',
-{
-reply_markup: {
-inline_keyboard: [
-[
-{
-text: '📢 Join Channel',
-url: CHANNEL_URL
-}
-],
-[
-{
-text: '✅ Verify Membership',
-callback_data: 'verify_membership'
-}
-]
-]
-}
-}
-);
-}
-
-// Telegram /start command
-
-bot.onText(
-/^/start(?:\s+(.+))?$/,
-async (message, match) => {
-try {
-const startParameter = (
-match && match[1]
-? match[1].trim()
-: ''
-).slice(0, 64);
-
-  await createUserIfMissing(
-    message.from,
-    startParameter
-  );
-
-  await sendStartKeyboard(
-    message.chat.id
-  );
-} catch (error) {
-  console.error(
-    'START_ERROR:',
-    error.message
-  );
-
-  await bot.sendMessage(
-    message.chat.id,
-    'Something went wrong. Please try /start again.'
-  ).catch(() => {});
-}
-
-}
-);
-
-// Membership verification callback
-
-bot.on(
-'callback_query',
-async query => {
-if (
-query.data !== 'verify_membership' ||
-!query.message
-) {
-return;
-}
-
-const uid = String(query.from.id);
-
-try {
-  await bot.answerCallbackQuery(
-    query.id,
-    { text: 'Checking membership…' }
-  );
-
-  const user = await getUser(uid);
-
-  if (!user) {
-    await bot.sendMessage(
-      query.message.chat.id,
-      'Please send /start first.'
-    );
-
-    return;
+async function isChannelMember(uid) {
+  try {
+    const member = await bot.getChatMember(TELEGRAM_CHANNEL_ID, Number(uid));
+    return memberIsActive(member);
+  } catch (err) {
+    console.error('Channel membership check failed:', err.message);
+    return false;
   }
+}
+async function getUser(uid) {
+  const snap = await db.ref(`users/${uid}`).get();
+  return snap.exists() ? snap.val() : null;
+}
+function validUid(value) { return /^[0-9]{1,20}$/.test(String(value || '')); }
+function parseReferral(startParam, uid) {
+  if (typeof startParam !== 'string' || !/^ref_[0-9]{1,20}$/.test(startParam)) return null;
+  const referrer = startParam.slice(4);
+  return referrer !== String(uid) ? referrer : null;
+}
+async function createUserIfNeeded(tgUser, startParam) {
+  const uid = String(tgUser.id);
+  const userRef = db.ref(`users/${uid}`);
+  const proposedReferrer = parseReferral(startParam, uid);
+  const creationNonce = crypto.randomUUID();
+  const result = await userRef.transaction(current => {
+    if (current) return current;
+    return {
+      telegram_id: uid,
+      first_name: String(tgUser.first_name || 'Student').slice(0, 80),
+      referred_by: null,
+      referral_count: 0,
+      joined_channel: false,
+      credited_referrals: {},
+      created_at: admin.database.ServerValue.TIMESTAMP,
+      _creation_nonce: creationNonce
+    };
+  }, undefined, false);
 
-  const joined = await verifyChannelMembership(uid);
-
-  if (!joined) {
-    await bot.sendMessage(
-      query.message.chat.id,
-      'Membership not found. Join the channel and try again.',
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: '📢 Join Channel',
-                url: CHANNEL_URL
-              }
-            ],
-            [
-              {
-                text: '🔄 Verify Membership',
-                callback_data: 'verify_membership'
-              }
-            ]
-          ]
-        }
-      }
-    );
-
-    return;
-  }
-
-  // Mark joined status atomically.
-  const joinedTransaction = await getUserRef(uid)
-    .child('joined_channel')
-    .transaction(
-      current => {
-        if (
-          current === 1 ||
-          current === true
-        ) {
-          return current;
-        }
-
-        return 1;
-      },
-      undefined,
-      false
-    );
-
-  const firstVerification =
-    joinedTransaction.committed &&
-    joinedTransaction.snapshot.val() === 1 &&
-    user.joined_channel !== 1 &&
-    user.joined_channel !== true;
-
-  // Re-read after the transaction so we use current data.
-  const latestUser = await getUser(uid);
-
-  if (
-    firstVerification &&
-    latestUser &&
-    latestUser.referred_by
-  ) {
-    try {
-      const newCount = await incrementReferralOnce(
-        latestUser.referred_by,
-        uid
-      );
-
-      if (newCount !== null) {
-        await bot.sendMessage(
-          Number(latestUser.referred_by),
-          `🎉 New referral joined! Your count: ${newCount}/9`
-        );
-      }
-    } catch (referralError) {
-      console.error(
-        'REFERRAL_ERROR:',
-        referralError.message
-      );
+  // Only the request that actually created the account can set the first referrer.
+  const newlyCreated = result.snapshot.exists() && result.snapshot.child('_creation_nonce').val() === creationNonce;
+  if (newlyCreated) {
+    if (proposedReferrer) {
+      const referrerExists = await db.ref(`users/${proposedReferrer}`).get();
+      if (referrerExists.exists()) await userRef.child('referred_by').set(proposedReferrer);
     }
+    await userRef.child('_creation_nonce').remove();
   }
-
-  await bot.sendMessage(
-    query.message.chat.id,
-    '✅ Membership verified!\n\n' +
-      'Your personal dashboard is ready.',
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '🎓 Open Dashboard',
-              url: makeDashboardUrl(uid)
-            }
-          ]
-        ]
-      }
-    }
-  );
-} catch (error) {
-  console.error(
-    'VERIFY_ERROR:',
-    error.message
-  );
-
-  await bot.sendMessage(
-    query.message.chat.id,
-    'Verification failed temporarily. Please try again.'
-  ).catch(() => {});
+  const fresh = await getUser(uid);
+  if (fresh && !fresh.first_name && tgUser.first_name) await userRef.child('first_name').set(String(tgUser.first_name).slice(0, 80));
+  return await getUser(uid);
 }
+async function verifyAndCredit(uid) {
+  if (!(await isChannelMember(uid))) return { ok: false, reason: 'not_member' };
+  const eventId = crypto.randomUUID();
+  const userRef = db.ref(`users/${uid}`);
+  const result = await userRef.transaction(current => {
+    if (!current) return;
+    if (current.joined_channel === true) return current;
+    return { ...current, joined_channel: true, verified_at: admin.database.ServerValue.TIMESTAMP, verification_event: eventId };
+  }, undefined, false);
+  if (!result.committed || !result.snapshot.exists()) return { ok: false, reason: 'missing_user' };
+  const user = result.snapshot.val();
+  const newlyVerified = user.verification_event === eventId;
 
-}
-);
-
-bot.on(
-'polling_error',
-error => {
-console.error(
-'TELEGRAM_POLLING_ERROR:',
-error.message
-);
-}
-);
-
-// Serve the frontend.
-
-app.get('/', (req, res) => {
-res.sendFile(
-path.join(__dirname, 'index.html')
-);
-});
-
-app.get('/healthz', (req, res) => {
-res.status(200).json({
-ok: true
-});
-});
-
-// Authenticate all dashboard APIs using the signed token.
-
-function requireDashboardToken(req, res, next) {
-const token = String(
-req.query.token ||
-req.get('x-dashboard-token') ||
-''
-);
-
-const payload = verifyDashboardToken(token);
-
-if (!payload) {
-return res.status(401).json({
-error: 'Invalid or expired dashboard token. Reopen the dashboard from Telegram.'
-});
-}
-
-req.dashboardUserId = payload.uid;
-req.dashboardToken = token;
-
-next();
-}
-
-// User dashboard data.
-
-app.get(
-'/api/user-data',
-requireDashboardToken,
-async (req, res) => {
-try {
-const uid = req.dashboardUserId;
-const user = await getUser(uid);
-
-  if (!user) {
-    return res.status(404).json({
-      error: 'User not found.'
-    });
-  }
-
-  const referralCount = Math.max(
-    0,
-    Number(user.referral_count || 0)
-  );
-
-  const subjects = SUBJECTS.map(
-    (subject, index) => {
-      const requiredReferrals = index + 1;
-
-      const unlocked =
-        referralCount >= requiredReferrals;
-
+  // Atomic marker + count update on the inviter prevents repeat verification from earning extra credit.
+  if (newlyVerified && validUid(user.referred_by) && user.referred_by !== String(uid)) {
+    const inviterRef = db.ref(`users/${user.referred_by}`);
+    await inviterRef.transaction(current => {
+      if (!current) return;
+      const credits = current.credited_referrals || {};
+      if (credits[String(uid)]) return current;
       return {
-        id: subject.id,
-        name: subject.name,
-        required_referrals: requiredReferrals,
-        unlocked,
-        download_url: unlocked
-          ? (
-              `/api/download/${subject.id}` +
-              `?token=${encodeURIComponent(req.dashboardToken)}`
-            )
-          : null
+        ...current,
+        referral_count: Math.max(0, Number(current.referral_count) || 0) + 1,
+        credited_referrals: { ...credits, [String(uid)]: true }
       };
+    }, undefined, false);
+  }
+  return { ok: true, user: await getUser(uid) };
+}
+function authMiddleware(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const payload = verifyToken(token);
+  if (!payload) return res.status(401).json({ error: 'Login link expired or invalid. Open the dashboard again from the Telegram bot.' });
+  req.uid = String(payload.uid);
+  next();
+}
+
+app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.get('/api/user-data', authMiddleware, async (req, res) => {
+  try {
+    const user = await getUser(req.uid);
+    if (!user) return res.status(404).json({ error: 'User not found. Open the Telegram bot and press Start.' });
+    if (!user.joined_channel || !(await isChannelMember(req.uid))) {
+      return res.status(403).json({ error: 'Please join the Telegram channel and verify your membership in the bot first.', needsMembership: true, channelUrl: CHANNEL_URL });
     }
-  );
-
-  res.set('Cache-Control', 'no-store');
-
-  res.json({
-    first_name: String(
-      user.first_name || 'Student'
-    ),
-    referral_count: referralCount,
-    referral_target: 9,
-    joined_channel:
-      user.joined_channel === 1 ||
-      user.joined_channel === true,
-    referral_link:
-      `https://t.me/${BOT_USERNAME}?start=ref_${uid}`,
-    subjects
-  });
-} catch (error) {
-  console.error(
-    'USER_DATA_ERROR:',
-    error.message
-  );
-
-  res.status(500).json({
-    error: 'Unable to load dashboard data.'
-  });
-}
-
-}
-);
-
-// Secure PDF download proxy.
-// Raw Drive URLs and IDs never leave the backend.
-
-app.get(
-'/api/download/:subjectId',
-requireDashboardToken,
-async (req, res) => {
-try {
-const subject = SUBJECT_MAP.get(
-String(req.params.subjectId || '')
-);
-
-  if (!subject) {
-    return res.status(404).send('Not found.');
+    const count = Math.max(0, Number(user.referral_count) || 0);
+    res.json({
+      firstName: user.first_name || 'Student',
+      referralCount: count,
+      requiredReferrals: 9,
+      referralLink: `https://t.me/${BOT_USERNAME}?start=ref_${req.uid}`,
+      subjects: SUBJECTS.map((s, i) => ({ id: s.id, name: s.name, required: i + 1, unlocked: count >= i + 1, downloadPath: count >= i + 1 ? `/api/download/${s.id}` : null }))
+    });
+  } catch (err) {
+    console.error('user-data error:', err.message);
+    res.status(500).json({ error: 'Could not load dashboard. Please try again.' });
   }
+});
+app.get('/api/download/:subjectId', authMiddleware, async (req, res) => {
+  try {
+    const subject = SUBJECTS.find(s => s.id === req.params.subjectId);
+    if (!subject) return res.status(404).json({ error: 'PDF not found.' });
+    const user = await getUser(req.uid);
+    if (!user || !user.joined_channel || !(await isChannelMember(req.uid))) return res.status(403).send('Join the Telegram channel and verify membership first.');
+    const index = SUBJECTS.findIndex(s => s.id === subject.id) + 1;
+    if ((Number(user.referral_count) || 0) < index) return res.status(403).send('This PDF is locked. Complete the referral milestone first.');
 
-  const user = await getUser(
-    req.dashboardUserId
-  );
-
-  if (!user) {
-    return res.status(404).send('User not found.');
-  }
-
-  const joined =
-    user.joined_channel === 1 ||
-    user.joined_channel === true;
-
-  if (!joined) {
-    return res.status(403).send(
-      'Verify channel membership first.'
-    );
-  }
-
-  const count = Math.max(
-    0,
-    Number(user.referral_count || 0)
-  );
-
-  if (count < subject.requiredReferrals) {
-    return res.status(403).send(
-      'This PDF is locked. Invite more direct referrals.'
-    );
-  }
-
-  const driveUrl =
-    'https://drive.google.com/uc?export=download&id=' +
-    encodeURIComponent(subject.driveId);
-
-  const upstream = await fetch(
-    driveUrl,
-    {
-      redirect: 'follow',
-      signal: AbortSignal.timeout(25000)
+    const driveUrl = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(subject.driveId)}`;
+    const upstream = await fetch(driveUrl, { redirect: 'follow', signal: AbortSignal.timeout(25000) });
+    const contentType = (upstream.headers.get('content-type') || '').toLowerCase();
+    if (!upstream.ok || !contentType.includes('pdf')) {
+      console.error(`Drive did not return a PDF for ${subject.id}; status=${upstream.status}; content-type=${contentType}`);
+      return res.status(502).send('Google Drive did not provide the PDF directly. Check that this file is accessible to viewers and try again later.');
     }
-  );
-
-  if (!upstream.ok || !upstream.body) {
-    return res.status(502).send(
-      'PDF provider is unavailable.'
-    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${subject.id}.pdf"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    console.error('download error:', err.message);
+    if (!res.headersSent) res.status(502).send('Download failed. Please try again later.');
   }
+});
 
-  const contentType =
-    upstream.headers.get('content-type') || '';
-
-  if (
-    !contentType.toLowerCase().includes('pdf') &&
-    !contentType.toLowerCase().includes('octet-stream')
-  ) {
-    return res.status(502).send(
-      'Google Drive did not return a direct PDF. Configure an authenticated Drive download.'
-    );
+async function sendHome(chatId, user, userData) {
+  const keyboard = [];
+  if (!userData || !userData.joined_channel) {
+    keyboard.push([{ text: '📢 Join Telegram Channel', url: CHANNEL_URL }]);
+    keyboard.push([{ text: '✅ Verify Membership', callback_data: 'verify_membership' }]);
+  } else {
+    keyboard.push([{ text: '🌐 Open My Dashboard', url: makeDashboardUrl(user.telegram_id) }]);
+    keyboard.push([{ text: '🔄 Refresh / Verify Again', callback_data: 'verify_membership' }]);
   }
+  await bot.sendMessage(chatId,
+    `Hi ${user.first_name || 'Student'}! 👋\n\n` +
+    `Welcome to the Study PDF Referral Bot.\n\n` +
+    `1. Join the channel.\n2. Tap “Verify Membership”.\n3. Open your dashboard.\n4. Invite friends using your personal referral link.\n\n` +
+    `One verified direct referral = one subject unlock. There are 9 subjects.`,
+    { reply_markup: { inline_keyboard: keyboard } });
+}
 
-  res.setHeader(
-    'Content-Type',
-    'application/pdf'
-  );
-
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="${subject.id}.pdf"`
-  );
-
-  res.setHeader(
-    'Cache-Control',
-    'private, no-store'
-  );
-
-  Readable.fromWeb(upstream.body).pipe(res);
-} catch (error) {
-  console.error(
-    'DOWNLOAD_ERROR:',
-    error.message
-  );
-
-  if (!res.headersSent) {
-    res.status(502).send(
-      'Download failed. Please try again later.'
-    );
+bot.onText(/^\/start(?:\s+(.+))?$/, async (msg, match) => {
+  try {
+    const startParam = (match && match[1] || '').trim();
+    const user = await createUserIfNeeded(msg.from, startParam);
+    await sendHome(msg.chat.id, user, user);
+  } catch (err) {
+    console.error('/start error:', err.message);
+    bot.sendMessage(msg.chat.id, 'Something went wrong. Please try /start again in a moment.').catch(() => {});
   }
-}
+});
 
-}
-);
+bot.on('callback_query', async query => {
+  if (query.data !== 'verify_membership') return;
+  const chatId = query.message && query.message.chat && query.message.chat.id;
+  const uid = String(query.from.id);
+  try {
+    await bot.answerCallbackQuery(query.id, { text: 'Checking channel membership…' });
+    const user = await getUser(uid);
+    if (!user) {
+      if (chatId) await bot.sendMessage(chatId, 'Please press /start first.');
+      return;
+    }
+    const result = await verifyAndCredit(uid);
+    if (!result.ok && result.reason === 'not_member') {
+      if (chatId) await bot.sendMessage(chatId, `I cannot see your membership yet. Join the channel first, then tap Verify Membership.\n\n${CHANNEL_URL}`, {
+        reply_markup: { inline_keyboard: [[{ text: '📢 Join Channel', url: CHANNEL_URL }, { text: '✅ Verify Again', callback_data: 'verify_membership' }]] }
+      });
+      return;
+    }
+    if (!result.ok) {
+      if (chatId) await bot.sendMessage(chatId, 'Please press /start again and retry verification.');
+      return;
+    }
+    const fresh = result.user;
+    if (chatId) {
+      await bot.sendMessage(chatId,
+        `✅ Membership verified!\n\nYour direct verified referrals: ${Number(fresh.referral_count) || 0}/9\n\nOpen your dashboard below.`,
+        { reply_markup: { inline_keyboard: [[{ text: '🌐 Open My Dashboard', url: makeDashboardUrl(uid) }], [{ text: '🔗 Share My Referral Link', url: `https://t.me/${BOT_USERNAME}?start=ref_${uid}` }]] } });
+    }
+  } catch (err) {
+    console.error('verify callback error:', err.message);
+    if (chatId) bot.sendMessage(chatId, 'Could not verify right now. Please try again.').catch(() => {});
+  }
+});
 
-// Global error handler.
-
-app.use(
-(error, req, res, next) => {
-console.error(
-'SERVER_ERROR:',
-error.message
-);
-
-if (!res.headersSent) {
-  res.status(500).json({
-    error: 'Internal server error.'
-  });
-}
-
-}
-);
-
-const server = app.listen(
-PORT,
-() => {
-console.log(
-"Server listening on port ${PORT}"
-);
-}
-);
-
-async function shutdown(signal) {
-console.log("${signal}: shutting down");
-
-server.close();
-
-try {
-await bot.stopPolling();
-} catch {}
-
-process.exit(0);
-}
-
-process.on(
-'SIGTERM',
-() => shutdown('SIGTERM')
-);
-
-process.on(
-'SIGINT',
-() => shutdown('SIGINT')
-);
+bot.on('polling_error', err => console.error('Telegram polling error:', err.message));
+app.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Bot API listening on port', process.env.PORT || 3000));
